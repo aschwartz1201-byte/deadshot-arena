@@ -1,10 +1,273 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>BAAHSHOT ARENA</title>
+  <meta charset="UTF-8">
+  <title>Deadshot Arena - Final Build</title>
+  <style>
+    body { margin: 0; background: #111; overflow: hidden; color: white; font-family: monospace; }
+    #hud { position: absolute; top: 10px; left: 10px; font-size: 18px; }
+    #shop { position: absolute; top: 200px; left: 50%; transform: translateX(-50%); color: yellow; font-size: 20px; display: none; text-align: center; }
+    canvas { display: block; margin: auto; background: #222; border: 3px solid #555; cursor: none; }
+  </style>
 </head>
 <body>
-  <h1>Hello Amalata! 🎮🔥</h1>
-  <p>Your game is working!</p>
+  <div id="hud">Wave: 1 | Weapon: Pistol | Ammo: 6 | Score: 0 | Health: 100</div>
+  <div id="shop">
+    <p>🛒 SHOP (Press Number Keys to Buy)</p>
+    <p>1. Grenade Launcher (1000) 💣</p>
+    <p>2. Full Health (500) 💚</p>
+    <p>3. Max Ammo (300) 🔫</p>
+    <p>4. Speed Boost (800) ⚡</p>
+  </div>
+  <canvas id="game" width="900" height="600"></canvas>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const hud = document.getElementById("hud");
+    const shopDiv = document.getElementById("shop");
+
+    const player = { x: 450, y: 300, r: 20, speed: 4, score: 0, health: 100 };
+    let bullets = [];
+    let enemies = [];
+    let powerUps = [];
+    const keys = {};
+    let mouseX = 0, mouseY = 0;
+    let shooting = false;
+
+    // Weapons
+    const weapons = {
+      pistol: { name: "Pistol", ammo: 6, maxAmmo: 6, damage: 50, fireRate: 300 },
+      rifle: { name: "Rifle", ammo: 30, maxAmmo: 30, damage: 25, fireRate: 100 },
+      shotgun: { name: "Shotgun", ammo: 8, maxAmmo: 8, damage: 40, fireRate: 700 },
+      grenade: { name: "Grenade Launcher", ammo: 5, maxAmmo: 5, damage: 200, fireRate: 1200, unlocked: false }
+    };
+    let currentWeapon = weapons.pistol;
+    let lastShot = 0;
+    let damageBoostActive = false;
+    let damageBoostTimer = 0;
+
+    // Waves
+    let wave = 1;
+    let waveInProgress = false;
+    let enemiesRemaining = 0;
+    let shopOpen = false;
+
+    document.addEventListener("keydown", e => {
+      keys[e.key] = true;
+
+      if (!shopOpen) {
+        if (e.key === "r") currentWeapon.ammo = currentWeapon.maxAmmo;
+        if (e.key === "1") currentWeapon = weapons.pistol;
+        if (e.key === "2") currentWeapon = weapons.rifle;
+        if (e.key === "3") currentWeapon = weapons.shotgun;
+        if (e.key === "4" && weapons.grenade.unlocked) currentWeapon = weapons.grenade;
+      } else {
+        if (e.key === "1" && player.score >= 1000) { weapons.grenade.unlocked = true; player.score -= 1000; }
+        if (e.key === "2" && player.score >= 500) { player.health = 100; player.score -= 500; }
+        if (e.key === "3" && player.score >= 300) { currentWeapon.ammo = currentWeapon.maxAmmo; player.score -= 300; }
+        if (e.key === "4" && player.score >= 800) { player.speed += 1; player.score -= 800; }
+      }
+    });
+    document.addEventListener("keyup", e => keys[e.key] = false);
+
+    canvas.addEventListener("mousemove", e => {
+      const rect = canvas.getBoundingClientRect();
+      mouseX = e.clientX - rect.left;
+      mouseY = e.clientY - rect.top;
+    });
+    canvas.addEventListener("mousedown", () => shooting = true);
+    canvas.addEventListener("mouseup", () => shooting = false);
+
+    function shoot() {
+      const now = Date.now();
+      if (now - lastShot < currentWeapon.fireRate) return;
+      if (currentWeapon.ammo <= 0) return;
+      lastShot = now;
+
+      const dx = mouseX - player.x, dy = mouseY - player.y;
+      const len = Math.hypot(dx, dy);
+      const dirX = dx/len, dirY = dy/len;
+
+      let damage = currentWeapon.damage;
+      if (damageBoostActive) damage *= 2;
+
+      if (currentWeapon === weapons.shotgun) {
+        for (let i=0; i<5; i++) {
+          const spread = (Math.random()-0.5)*0.3;
+          const angle = Math.atan2(dy, dx) + spread;
+          bullets.push({ x: player.x, y: player.y, dx: Math.cos(angle), dy: Math.sin(angle), r: 4, damage });
+        }
+      } else if (currentWeapon === weapons.grenade) {
+        bullets.push({ x: player.x, y: player.y, dx: dirX, dy: dirY, r: 8, damage, grenade: true, timer: 30 });
+      } else {
+        bullets.push({ x: player.x, y: player.y, dx: dirX, dy: dirY, r: 4, damage });
+      }
+
+      currentWeapon.ammo--;
+    }
+
+    function spawnWave() {
+      enemies = [];
+      const numEnemies = (wave % 5 === 0) ? 1 : 5 + wave * 3; // Boss every 5th wave
+      for (let i = 0; i < numEnemies; i++) {
+        const side = Math.floor(Math.random()*4);
+        let x, y;
+        if (side === 0) { x = 0; y = Math.random()*canvas.height; }
+        else if (side === 1) { x = canvas.width; y = Math.random()*canvas.height; }
+        else if (side === 2) { x = Math.random()*canvas.width; y = 0; }
+        else { x = Math.random()*canvas.width; y = canvas.height; }
+
+        if (wave % 5 === 0) {
+          // Boss
+          enemies.push({ x, y, r: 50, speed: 1.5, health: 2000 + wave*200, color: "darkred", boss: true });
+        } else {
+          // Normal enemies
+          const type = Math.random();
+          if (type < 0.6) enemies.push({ x, y, r: 15, speed: 2 + wave*0.1, health: 100 + wave*10, color: "red" });
+          else if (type < 0.9) enemies.push({ x, y, r: 12, speed: 4 + wave*0.1, health: 50 + wave*5, color: "orange" });
+          else enemies.push({ x, y, r: 25, speed: 1.2 + wave*0.05, health: 300 + wave*20, color: "purple" });
+        }
+      }
+      enemiesRemaining = enemies.length;
+      waveInProgress = true;
+    }
+
+    function spawnPowerUp(x, y) {
+      const roll = Math.random();
+      if (roll < 0.33) powerUps.push({ x, y, r: 12, type: "health", color: "lime" });
+      else if (roll < 0.66) powerUps.push({ x, y, r: 12, type: "ammo", color: "cyan" });
+      else powerUps.push({ x, y, r: 12, type: "damage", color: "gold" });
+    }
+
+    function update() {
+      if (!shopOpen && shooting) shoot();
+
+      if (keys["w"]) player.y -= player.speed;
+      if (keys["s"]) player.y += player.speed;
+      if (keys["a"]) player.x -= player.speed;
+      if (keys["d"]) player.x += player.speed;
+
+      player.x = Math.max(player.r, Math.min(canvas.width-player.r, player.x));
+      player.y = Math.max(player.r, Math.min(canvas.height-player.r, player.y));
+
+      for (let b of bullets) {
+        b.x += b.dx*10; 
+        b.y += b.dy*10; 
+
+        if (b.grenade) {
+          b.timer--;
+          if (b.timer <= 0) {
+            for (let e of enemies) {
+              const dist = Math.hypot(b.x-e.x, b.y-e.y);
+              if (dist < 80) e.health -= b.damage;
+            }
+            b.exploded = true;
+          }
+        }
+      }
+      bullets = bullets.filter(b => !b.exploded);
+
+      for (let e of enemies) {
+        const dx = player.x - e.x, dy = player.y - e.y;
+        const len = Math.hypot(dx, dy);
+        e.x += (dx/len) * e.speed;
+        e.y += (dy/len) * e.speed;
+
+        if (len < e.r + player.r) {
+          player.health -= e.boss ? 1 : 0.2;
+          if (player.health <= 0) {
+            alert("💀 GAME OVER! Final Score: " + player.score + " | Wave: " + wave);
+            document.location.reload();
+          }
+        }
+      }
+
+      for (let b of bullets) {
+        for (let e of enemies) {
+          const dist = Math.hypot(b.x-e.x, b.y-e.y);
+          if (dist < b.r + e.r && e.health > 0) {
+            e.health -= b.damage;
+            if (e.health <= 0) {
+              player.score += e.boss ? 2000 : 100;
+              enemiesRemaining--;
+              if (!e.boss && Math.random() < 0.3) spawnPowerUp(e.x, e.y);
+            }
+          }
+        }
+      }
+
+      for (let p of powerUps) {
+        const dist = Math.hypot(p.x-player.x, p.y-player.y);
+        if (dist < p.r + player.r) {
+          if (p.type === "health") player.health = Math.min(100, player.health + 30);
+          if (p.type === "ammo") currentWeapon.ammo = currentWeapon.maxAmmo;
+          if (p.type === "damage") { damageBoostActive = true; damageBoostTimer = Date.now() + 10000; }
+          p.collected = true;
+        }
+      }
+      powerUps = powerUps.filter(p => !p.collected);
+
+      if (damageBoostActive && Date.now() > damageBoostTimer) damageBoostActive = false;
+
+      if (waveInProgress && enemiesRemaining <= 0) {
+        wave++;
+        waveInProgress = false;
+        shopOpen = true;
+        shopDiv.style.display = "block";
+        setTimeout(() => {
+          shopDiv.style.display = "none";
+          shopOpen = false;
+          spawnWave();
+        }, 5000);
+      }
+
+      hud.textContent = `Wave: ${wave} | Weapon: ${currentWeapon.name} | Ammo: ${currentWeapon.ammo} | Score: ${player.score} | Health: ${Math.floor(player.health)} ${damageBoostActive ? "| POWER UP: DAMAGE x2" : ""}`;
+    }
+
+    function draw() {
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+
+      const angle = Math.atan2(mouseY - player.y, mouseX - player.x);
+      ctx.save();
+      ctx.translate(player.x, player.y);
+      ctx.rotate(angle);
+      ctx.fillStyle = "yellow";
+      ctx.beginPath(); ctx.arc(0, 0, player.r, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = "black";
+      ctx.fillRect(player.r-5, -5, 15, 10);
+      ctx.restore();
+
+      ctx.fillStyle = "white";
+      for (let b of bullets) { ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI*2); ctx.fill(); }
+
+      for (let e of enemies) {
+        if (e.health > 0) {
+          ctx.fillStyle = e.color;
+          ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI*2); ctx.fill();
+        }
+      }
+
+      for (let p of powerUps) {
+        ctx.fillStyle = p.color;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
+      }
+
+      ctx.strokeStyle = "red";
+      ctx.beginPath();
+      ctx.moveTo(mouseX-10, mouseY); ctx.lineTo(mouseX+10, mouseY);
+      ctx.moveTo(mouseX, mouseY-10); ctx.lineTo(mouseX, mouseY+10);
+      ctx.stroke();
+    }
+
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    spawnWave();
+    loop();
+  </script>
 </body>
 </html>
